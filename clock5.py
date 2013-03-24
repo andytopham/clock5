@@ -9,6 +9,7 @@
 # LEDs are at:
 # A0-7
 # Reads the alarm time from file: /home/pi/alarmtime
+# Updated to read the touch switches on B port.
 
 import time
 #import RPi.GPIO as GPIO
@@ -31,6 +32,8 @@ led4=16
 led5=32
 led6=64
 led7=128
+# decide how bright we want it
+defaultbrightness=128
 #constants for the sparkfun 7 seg dsplay
 cleardisplay=0x76		#followed by nothing
 decimalcontrol=0x77		#followed by 0-63
@@ -64,9 +67,18 @@ def ledsoff():
 
 def setoutput():	
 	bus.write_byte_data(0x20,0x00,0x00) # Set all of bank A to outputs 
-	bus.write_byte_data(0x20,0x01,0x00) # Set all of bank B to outputs 
+	#B0 = ctrl 1 output = 0
+	#B1 = ctrl 2 output = 0
+	#B2 = input 1       = 1
+	#B3 = input 2       = 1
+	#B4-7 = NC          = 0
+	bus.write_byte_data(0x20,0x01,0x0C) # Set all of bank B as above
+	register=registerb
+	value=0 	#momentary operation
+	bus.write_byte_data(address,register,value)
 
 def selftest(waittime,holdtime):
+	print "Running LED selftest"
 	#first, turn all the lights out
 	ledsoff()
 	#Then run a self-test
@@ -100,7 +112,6 @@ def selftest(waittime,holdtime):
 	# now turn them all off
 	ledsoff()
 
-
 def heartbeat():
 	if heartbeat == 1:
 		for j in range(100):
@@ -117,8 +128,6 @@ def heartbeat():
 					i=1
 #					GPIO.output(18, GPIO.LOW)
 					time.sleep(.009)
-#			GPIO.output(18, GPIO.LOW)
-#	GPIO.output(18, GPIO.LOW)
 
 def readalarmtime():
 	f=open('/home/pi/alarmtime','r')
@@ -131,10 +140,10 @@ def readalarmtime():
 
 def updateclock():
   global ioerrorcount
-  print "Updating clock"
   timenow=list(time.localtime())
   hour=timenow[3]
   minute=timenow[4] 
+  print "Updating clock:- ", hour, ":",minute
   try:  
     bus.write_byte(sevensegaddress,cleardisplay)
     bus.write_byte_data(sevensegaddress,decimalcontrol,16)	#draw colon
@@ -143,10 +152,13 @@ def updateclock():
     bus.write_byte(sevensegaddress,int(minute/10))
     bus.write_byte(sevensegaddress,minute%10)
   except IOError:
-    ioerrorcount=ioerrorcount+1
+	ioerrorcount=ioerrorcount+1
 	# need to reset cursor position when this happens
-    print "Error writing to 7segment display:", ioerrorcount  
-    bus.write_byte(sevensegaddress,cleardisplay)
+	print "Error writing to 7segment display:", ioerrorcount  
+	time.sleep(1)
+	bus.write_byte(sevensegaddress,cleardisplay)
+	time.sleep(1)
+	updateclock()		# try again
 	
 def write7seg(value):
   global ioerrorcount
@@ -162,7 +174,6 @@ def write7seg(value):
     print "Error writing to 7segment display: ", ioerrorcount  
     initclock()
 	
-
 def initclock():
   global ioerrorcount
   #bus.write_byte(sevensegaddress,factoryreset)
@@ -193,9 +204,7 @@ def gettemperature():
     ioerrorcount = ioerrorcount + 1
     print "Error writing to 7segment display: ", ioerrorcount  
     initclock()
-  
 
-  
 def updateleds():
 	timenow=list(time.localtime())
 	hour=timenow[3]
@@ -235,41 +244,57 @@ def dimdisplay(brightness):
     ioerrorcount = ioerrorcount + 1
     print "Error writing to 7segment display: ", ioerrorcount  
   
+def resettouch():
+  # touch control- 0=momentary, 1=latching.
+  register=registerb
+  value=1
+  bus.write_byte_data(address,register,value)
+  time.sleep(.1)
+  value=0
+  bus.write_byte_data(address,register,value)
+  time.sleep(.1)
+  
   
   ##The start of the real code ##
+print "main:- Clock5 - slice of pio-based alarm clock code."
+print "Using 8 leds and seven segment display."
+print "Using 2 touch switches."
 
 initclock()
 time.sleep(0.5)		#let the board settle down
 setoutput()
 time.sleep(0.5)		#let the board settle down
 updateclock()
+dimdisplay(defaultbrightness)
 selftest(0.1,1)
-print "Clock5 - slice of pio-based alarm clock code"
-print "Using 8 leds and seven segment display"
 print "reading alarmtime file..."
 alarmhour,alarmminute = readalarmtime()
 print "Read alarm time: %02d:%02d" % (alarmhour,alarmminute)
 print "No alarm on Sat or Sun"
 cycle=0
+seccounter=0
 
 while True:
-	time.sleep(refreshinterval)
-	if cycle == 0:			# clock update
-	  print "Cycle=0. Errs=", ioerrorcount,
+	time.sleep(.1)
+	seccounter=seccounter+1
+	if seccounter == 10*10: # update every 10 seconds - why not?
+	  seccounter=0
 	  updateclock()
-	  cycle=cycle+1
-	elif cycle == 1:		# temperature update
-	  print "Cycle=1",
-	  dimdisplay(64)
+	#poll for touch
+	register  = registerb
+	value =  bus.read_byte_data(address,register)
+	if value == 0x08:
+	  dimdisplay(32)
+	  resettouch()
+	  time.sleep(1)
+	  dimdisplay(defaultbrightness)	# recover
+	if value == 0x04:
 	  gettemperature()
-	  # printtemperature()
-	  cycle=cycle+1
-	elif cycle == 2:		# leds update
-	  print "Cycle=2",
-	  updateleds()
-	  cycle=cycle+1
-	elif cycle == 3:		# show alarm cycle
-	  print "Cycle=3",
-	  dimdisplay(128)
-	  showalarmtime()
-	  cycle=0
+	  resettouch()
+	  time.sleep(1)
+	  updateclock()
+	if value == 0x0C:
+	  selftest(0.1,1)
+	  resettouch()
+	  time.sleep(1)
+	  
