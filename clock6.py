@@ -20,10 +20,10 @@ import os
 bus = smbus.SMBus(1) # For revision 1 Raspberry Pi, change to bus = smbus.SMBus(1) for revision 2.
 
 class Clock:
-	# my first every python class
+	"""Class to control the i2c 7segment display"""
 	def __init__(self):
 		# decide how bright we want it
-		self.defaultbrightness=128
+		self.defaultbrightness=64
 		#constants for the sparkfun 7 seg dsplay
 		self.cleardisplay=0x76		#followed by nothing
 		self.decimalcontrol=0x77		#followed by 0-63
@@ -60,7 +60,7 @@ class Clock:
 			time.sleep(1)
 			self.update()		# try again
 
-	def showalarmtime(self):
+	def showalarmtime(self,alarmhour,alarmminute):
 		print "Showing alarm time:", alarmhour, ":", alarmminute
 		try:
 			bus.write_byte(self.addr,self.cleardisplay)
@@ -70,27 +70,47 @@ class Clock:
 			bus.write_byte(self.addr,int(alarmminute%10))
 			bus.write_byte(self.addr,int(alarmminute%10))
 		except IOError:
-			self.spierror = self.spierror + 1
-			print "Error writing to 7segment display: ", spierror  
+			self.spierror += 1
+			print "Error writing to 7segment display: ", self.spierror  
 			self.update()		# try again
 			
-	def showtemperature(self):
-		process=os.popen("/opt/vc/bin/vcgencmd measure_temp | egrep -o '[0-9]+' | head -n 1 | tr -d '\r\n'")
-		#firstline=result.readline()
-		result=process.read()
-		process.close()
-		print "Showing temperature of: ", result
+	def showcontent(self,content):
+		"""Display the content on the display. 
+		Expecting content to be 4 char string representing 4 digits.
+		Note! Must be digits, since display controller expects integers!
+		Other characters are by exception - need to lookup values in datasheet.
+		Need to add ability to handle negative numbers."""
+		print "Displaying content of: ", content
 		try:
 			bus.write_byte(self.addr,self.cleardisplay)		#to get rid of colon
-			bus.write_byte(self.addr,int(int(result)/10))
-			bus.write_byte(self.addr,int(int(result)%10))
-			bus.write_byte(self.addr,16)
-			bus.write_byte(self.addr, 0x43)
+			if content[0] == " ":
+				bus.write_byte(self.addr,16)	# space
+			elif content[0] == "-":
+				bus.write_byte(self.addr,0x2D)	# -
+			else:
+				bus.write_byte(self.addr,int(content[0]))
+			if content[1] == " ":
+				bus.write_byte(self.addr,16)	# space
+			else:
+				bus.write_byte(self.addr,int(content[1]))
+			if content[2] == " ":
+				bus.write_byte(self.addr,16)	# space
+			else:
+				bus.write_byte(self.addr,int(content[2]))
+			if content[3] == " ":
+				bus.write_byte(self.addr,16)	# space
+			else:
+				if content[3] == "C":
+					bus.write_byte(self.addr,0x43)	# C
+				else:
+					bus.write_byte(self.addr,int(content[3]))
+			if content[2] == " ":	#overwrite the space with a degree symbol
+				bus.write_byte_data(self.addr,self.digit3control,64+32+2+1)	# degree
 		except IOError:
-			self.spierror = self.spierror + 1
-			print "Error writing to 7segment display. Number  of errors on spi bus= ", spierror  
-			self.update()
-			
+			self.spierror += 1
+			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
+			self.update()	
+	
 	def dimdisplay(self,brightness):
 		print "Dimming 7 segment display=",brightness
 		if brightness == "max":
@@ -98,10 +118,11 @@ class Clock:
 		try:  
 			bus.write_byte_data(self.addr,self.brightnesscontrol,brightness)
 		except IOError:
-			spierror = spierror + 1
-			print "Error writing to 7segment display. Number  of errors on spi bus= ", spierror  
+			self.spierror += 1
+			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
 	
 class Leds():
+	"""Class to control the bank of 8 leds"""
 	def __init__(self):
 		self.address = 0x20 			# i2C address of MCP23017
 		self.registera = 0x12
@@ -169,6 +190,7 @@ class Leds():
 				heartbeat()
 			
 class Touch():
+	"""Class to handle the inputs from the touch switch ic."""
 	def __init__(self):
 		self.address = 0x20 			# i2C address of MCP23017
 		self.registerb = 0x13
@@ -191,6 +213,7 @@ class Touch():
 		return(bus.read_byte_data(self.address,self.register))
 	 
 class AlarmTime():
+	"""Class to manage the time for the alarm"""
 	alarmhour=0
 	alarmminute=0
 	
@@ -215,50 +238,92 @@ class AlarmTime():
 		timenow=list(time.localtime())
 		hour=timenow[3]
 		minute=timenow[4] 
-		print "Alarm", alarmhour,alarmminute, "Current", hour,minute
+	#	print "Alarm", alarmhour,alarmminute, "Current", hour,minute
 		if ((hour == alarmhour) and (minute == alarmminute)):
 			print "Alarm going off"
 			Leds().selftest()
-			
+
+class RemoteMachine():
+	"""Class to hold methods to communicate with a remote linux machine.
+	Currently used to talk to weather machine. 
+	Needs more recovery, e.g. restart the remote process if dead."""
 	
-	def test(self):
-		return 5
+	def __init__(self):
+		"""Check if machine exists
+		Then need to add check for whether the program is running."""
+		if os.system("ping -c 1 weather"):
+			print "Error: host weather not up"
+		if os.system("ssh weather ps -ef | grep -c grabtemp.py"):
+			print "Remote program is NOT running!!!"
+			# Need to attempt to restart it here
+		else:
+			print "Remote program is running"
+			#Now need to check whether the file has a valid length
+			
+	def read(self):
+		"""Not being used"""
+		# for this to work, need to have copied keys between the two machines, as found here...
+		# http://www.linuxproblem.org/art_9.html
+		readstring=os("ssh weather tail -1 /home/pi/weather/code/tmp")
+
+	def formatcontent(self):
+		"""Function relies on the remote machine weather
+		but it makes no checks that the remote script is still running.
+		Need to improve this to add the decimal and chars after that.
+		Also not sure what happens for negative numbers.
+		Format of returned numbers:-
+		  Small postive: "0.3"
+		  Negative: "-2."
+		"""
+		#process=os.popen("/opt/vc/bin/vcgencmd measure_temp | egrep -o '[0-9]+' | head -n 1 | tr -d '\r\n'")
+		process=os.popen("ssh weather tail -1 /home/pi/weather/code/tmp")
+		firstread=process.read()[12:14]
+		print firstread, "from remote file"
+		process.close()
+		if firstread[1] == ".":		# small positive
+			content = firstread[0] + "  C"
+		elif firstread[1] == "-":	# negative
+			content=firstread + " C"
+		print "Content length: ", len(content)
+		return(content)
 	
   ##The start of the real code ##
+"""Main:clock6"""
+"""Print info about the environment and initialise all hardware."""
 print "main:- Clock6 - slice of pio-based alarm clock code."
-print "Using 8 leds and seven segment display."
-print "Using 2 touch switches."
-
-Clock()
-Clock().update()
-Leds()
-Leds().selftest()
-Touch()
-AlarmTime()
-# print AlarmTime().test()
-alarmhour,alarmminute = AlarmTime().read()
+print "Using 8 leds and seven segment display and using 2 touch switches."
+print "Using remote machine weather to provide outside temperature data."
+myClock=Clock()
+myClock.update()
+myLeds=Leds()
+myLeds.selftest()
+myTouch=Touch()
+myAlarmTime=AlarmTime()
+alarmhour,alarmminute = myAlarmTime.read()
+myRemoteMachine=RemoteMachine()
 seccounter=0
-
 while True:
 	time.sleep(.1)
-	seccounter=seccounter+1
+	seccounter += 1
 	if seccounter == 10*10: # update every 10 seconds - why not?
 	  seccounter=0
-	  Clock().update()
+	  myClock.showcontent(myRemoteMachine.formatcontent())
+	  time.sleep(2)
+	  myClock.update()
 	  #check for alarm
-	  AlarmTime().check()
+	  myAlarmTime.check()
 	
 	#poll for touch
-	value=Touch().istouched()
+	value=myTouch.istouched()
 	if value == 0x08:
-	  Clock().dimdisplay(32)
+	  myClock.dimdisplay(16)
 	  time.sleep(1)
-	  Clock().dimdisplay("max")	# recover
+	  myClock.dimdisplay("max")	# recover
 	if value == 0x04:
-	  Clock().showalarmtime()
+	  myClock.showalarmtime(alarmhour,alarmminute)
 	  time.sleep(1)
-	  Clock().update()
+	  myClock.update()
 	if value == 0x0C:
-	  Leds().selftest()
+	  myLeds.selftest()
 	  time.sleep(1)
 	  
