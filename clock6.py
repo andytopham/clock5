@@ -1,21 +1,23 @@
 #!/usr/bin/python
-# clock6.py
-# andyt new alarm clock in box
-# requires slice of pi hw
-# requires smbus module
-# leverages from clock3 code - actually called flash5.py
-# This is the syntax:  bus.write_byte_data(address,register,value)
-# Or, to read values back:  value =  bus.read_byte_data(address,register) 
-# Reads the alarm time from file: /home/pi/alarmtime
-# Updated to read the touch switches on B port.
-# Updated to move towards class definitions
-# Note: Bank A reserved for Leds. Bank B reserved for touch switches.
-
+""" clock6.py
+	# andyt new alarm clock in box
+	# requires slice of pi hw
+	# requires smbus module
+	# leverages from clock3 code - actually called flash5.py
+	# This is the syntax:  bus.write_byte_data(address,register,value)
+	# Or, to read values back:  value =  bus.read_byte_data(address,register) 
+	# Reads the alarm time from file: /home/pi/alarmtime
+	# Updated to read the touch switches on B port.
+	# Updated to move towards class definitions
+	# Uses LDR for light sensing to control 7seg display brightness.
+	# Note: Bank A reserved for Leds. Bank B reserved for touch switches.
+"""
 import time
 import smbus
 import sys
 import getopt
 import os
+import subprocess
  
 bus = smbus.SMBus(1) # For revision 1 Raspberry Pi, change to bus = smbus.SMBus(1) for revision 2.
 
@@ -44,7 +46,7 @@ class Clock:
 		timenow=list(time.localtime())
 		hour=timenow[3]
 		minute=timenow[4] 
-		print "Initialised clock with current time:- ", hour, ":",minute
+		print "Time=", hour, ":",minute
 		try:  
 			bus.write_byte_data(self.addr,self.decimalcontrol,16)	#draw colon
 			bus.write_byte_data(self.addr,self.cursorcontrol,0)
@@ -61,7 +63,7 @@ class Clock:
 			self.update()		# try again
 
 	def showalarmtime(self,alarmhour,alarmminute):
-		print "Showing alarm time:", alarmhour, ":", alarmminute
+		print "Alarm time=", alarmhour, ":", alarmminute
 		try:
 			bus.write_byte(self.addr,self.cleardisplay)
 			bus.write_byte_data(self.addr,self.decimalcontrol,16)	#draw colon
@@ -80,7 +82,7 @@ class Clock:
 		Note! Must be digits, since display controller expects integers!
 		Other characters are by exception - need to lookup values in datasheet.
 		Need to add ability to handle negative numbers."""
-		print "Displaying content of: ", content
+		print "Content=", content,
 		try:
 			bus.write_byte(self.addr,self.cleardisplay)		#to get rid of colon
 			if content[0] == " ":
@@ -115,7 +117,7 @@ class Clock:
 		return(255-reading)
 	
 	def dimdisplay(self,brightness):
-		print "Dimming 7 segment display=",brightness
+		print "Brightness=",brightness,
 		if brightness == "max":
 			brightness=self.defaultbrightness
 		try:  
@@ -252,23 +254,43 @@ class RemoteMachine():
 	Needs more recovery, e.g. restart the remote process if dead."""
 	
 	def __init__(self):
+		# nothing to see here
+		a=1
+		
+	def verify(self):
 		"""Check if machine exists
 		Then need to add check for whether the program is running."""
-		if os.system("ping -c 1 weather"):
+		try:
+			subprocess.check_call(["ping", "-c", "1", "weather"])
+		except CalledProcessError:
 			print "Error: host weather not up"
-		if os.system("ssh weather ps -ef | grep -c grabtemp.py"):
-			print "Remote program is NOT running!!!"
-			# Need to attempt to restart it here
-		else:
+			return(1)		# abort
+
+		p=self.countrunningprocess()
+		
+		if (p > 2):		# seems that we need this value! we might get caught here by similar processes!
 			print "Remote program is running"
 			#Now need to check whether the file has a valid length
-			
-	def read(self):
-		"""Not being used"""
-		# for this to work, need to have copied keys between the two machines, as found here...
-		# http://www.linuxproblem.org/art_9.html
-		readstring=os("ssh weather tail -1 /home/pi/weather/code/tmp")
-
+			return(0)
+		else:
+			print "Remote program is NOT running!!!"
+			# Attempt to restart it here
+			try:
+				subprocess.call(["ssh", "weather", "/home/pi/weather/code/grabtemp.py", ">", "/home/pi/weather/code/tmp", "&"])
+				print "Restarted temperature grabbing on remote machine."
+				time.sleep(60)			# need to wait a while for logged temperatures to start
+				self.countrunningprocess()
+			except OSError:
+				print "** Failed to restart temperature grabbing on remote machine"
+		
+	def countrunningprocess(self):
+		try:
+			p=subprocess.check_output(["ssh", "weather", "ps", "-ef", "|", "grep", "-c", "grabtemp.py"])
+		except CalledProcessError:
+			print "Failed to find out if remote process was running"
+		print "Number of remote processes=", p[0]
+		return(int(p[0]))
+		
 	def formatcontent(self):
 		"""Function relies on the remote machine weather
 		but it makes no checks that the remote script is still running.
@@ -279,15 +301,18 @@ class RemoteMachine():
 		  Negative: "-2."
 		"""
 		#process=os.popen("/opt/vc/bin/vcgencmd measure_temp | egrep -o '[0-9]+' | head -n 1 | tr -d '\r\n'")
-		process=os.popen("ssh weather tail -1 /home/pi/weather/code/tmp")
-		firstread=process.read()[12:14]
-		print firstread, "from remote file"
-		process.close()
+		try:
+			p=subprocess.check_output(["ssh", "weather", "tail", "-1", "/home/pi/weather/code/tmp"])
+		except CalledProcessError:
+			print "Failed to tail the temperature file"
+			p="000000000000000"
+		firstread=p[12:14]
+		# print firstread, "from remote file"
 		if firstread[1] == ".":		# small positive
 			content = firstread[0] + "  C"
 		elif firstread[1] == "-":	# negative
 			content=firstread + " C"
-		print "Content length: ", len(content)
+		# print "Content length: ", len(content)
 		return(content)
 	
 class ADC():
@@ -301,7 +326,7 @@ class ADC():
 		
 	def read(self):
 		reading = bus.read_i2c_block_data(self.adcaddress, 0x01, 0x0A) # returns 10 channels of data
-		print "ADC=", reading[0]
+		# print "ADC=", reading[0]
 		return(reading[0])		# input wired to Ch0
 		
 		
@@ -319,18 +344,17 @@ myTouch=Touch()
 myAlarmTime=AlarmTime()
 alarmhour,alarmminute = myAlarmTime.read()
 myRemoteMachine=RemoteMachine()
+remote=myRemoteMachine.verify()		# check that everything is ok with remote machine
 myADC=ADC()
-#print "ADC=", myADC.read()
 seccounter=0
 while True:
 	time.sleep(.1)
 	seccounter += 1
-	if seccounter == 10*10: # update every 10 seconds - why not?
+	if seccounter == 5*10: # update every 5 seconds - why not?
 	  seccounter=0
 	  myClock.showcontent(myRemoteMachine.formatcontent())
 	  time.sleep(2)
 	  myClock.update()
-	  #check for alarm
 	  myAlarmTime.check()
 	  myClock.dimdisplay(myClock.calcbrightness(myADC.read()))
 	#poll for touch
