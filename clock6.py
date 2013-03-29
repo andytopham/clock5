@@ -110,6 +110,9 @@ class Clock:
 			self.spierror += 1
 			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
 			self.update()	
+			
+	def calcbrightness(self,reading):
+		return(255-reading)
 	
 	def dimdisplay(self,brightness):
 		print "Dimming 7 segment display=",brightness
@@ -287,6 +290,21 @@ class RemoteMachine():
 		print "Content length: ", len(content)
 		return(content)
 	
+class ADC():
+	"""Class to handle the Hobbytronics analog to digital converter.
+	This is a preprogrammed chip on the i2c bus with 10 channels of input."""
+	adcaddress=0x28
+	def __init__(self):
+		os.system("i2cdetect -y 1")
+		bus.write_byte(self.adcaddress, 0x01)	#setup 8 bit conversion
+		time.sleep(0.1)
+		
+	def read(self):
+		reading = bus.read_i2c_block_data(self.adcaddress, 0x01, 0x0A) # returns 10 channels of data
+		print "ADC=", reading[0]
+		return(reading[0])		# input wired to Ch0
+		
+		
   ##The start of the real code ##
 """Main:clock6"""
 """Print info about the environment and initialise all hardware."""
@@ -301,6 +319,8 @@ myTouch=Touch()
 myAlarmTime=AlarmTime()
 alarmhour,alarmminute = myAlarmTime.read()
 myRemoteMachine=RemoteMachine()
+myADC=ADC()
+#print "ADC=", myADC.read()
 seccounter=0
 while True:
 	time.sleep(.1)
@@ -312,7 +332,7 @@ while True:
 	  myClock.update()
 	  #check for alarm
 	  myAlarmTime.check()
-	
+	  myClock.dimdisplay(myClock.calcbrightness(myADC.read()))
 	#poll for touch
 	value=myTouch.istouched()
 	if value == 0x08:
