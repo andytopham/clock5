@@ -1,5 +1,8 @@
 #!/usr/bin/python
 """ clock6.py
+	Todo:
+		catch read error for adc with a try...
+		
 	# andyt new alarm clock in box
 	# requires slice of pi hw
 	# requires smbus module
@@ -18,12 +21,15 @@ import sys
 import getopt
 import os
 import subprocess
+import logging
+import datetime
  
 bus = smbus.SMBus(1) # For revision 1 Raspberry Pi, change to bus = smbus.SMBus(1) for revision 2.
 
 class Clock:
 	"""Class to control the i2c 7segment display"""
 	def __init__(self):
+		logging.info("Initialising clock")
 		# decide how bright we want it
 		self.defaultbrightness=64
 		#constants for the sparkfun 7 seg dsplay
@@ -42,37 +48,54 @@ class Clock:
 		self.addr=0x77		# spi address of the 7seg display
 	
 	def update(self):
+		# show time on 7 segment display
 		timenow=list(time.localtime())
 		timenow=list(time.localtime())
 		hour=timenow[3]
 		minute=timenow[4] 
 		print "Time=", hour, ":",minute
+		logging.info("Update: "+str(hour)+str(minute))
 		try:  
-			bus.write_byte_data(self.addr,self.decimalcontrol,16)	#draw colon
+			# bus.write_byte_data(self.addr,self.decimalcontrol,16)	#draw colon
 			bus.write_byte_data(self.addr,self.cursorcontrol,0)
 			bus.write_byte(self.addr,int(hour/10))
 			bus.write_byte(self.addr,hour%10)
 			bus.write_byte(self.addr,int(minute/10))
 			bus.write_byte(self.addr,minute%10)
 		except IOError:
-			self.spierror=self.spierror+1
+			self.spierror += 1
 			# need to reset cursor position when this happens....
 			bus.write_byte_data(self.addr,self.cursorcontrol,0)
+			logging.error("Error writing to 7segment display:", self.spierror)
 			print "Error writing to 7segment display:", self.spierror  
 			time.sleep(1)
 			self.update()		# try again
 
+	def colon(self,tick):
+		try:
+			if tick == 0:
+				bus.write_byte_data(self.addr,self.decimalcontrol,16)	#draw colon
+			else:
+				bus.write_byte_data(self.addr,self.decimalcontrol,0)	#draw colon
+		except IOError:
+			self.spierror += 1
+			bus.write_byte_data(self.addr,self.cursorcontrol,0)
+			logging.error("Error writing to 7segment display, colon:", self.spierror)
+
+			
 	def showalarmtime(self,alarmhour,alarmminute):
+		logging.info("Showing alarm time")
 		print "Alarm time=", alarmhour, ":", alarmminute
 		try:
 			bus.write_byte(self.addr,self.cleardisplay)
 			bus.write_byte_data(self.addr,self.decimalcontrol,16)	#draw colon
 			bus.write_byte(self.addr,int(alarmhour/10))
 			bus.write_byte(self.addr,int(alarmhour%10))
-			bus.write_byte(self.addr,int(alarmminute%10))
+			bus.write_byte(self.addr,int(alarmminute/10))
 			bus.write_byte(self.addr,int(alarmminute%10))
 		except IOError:
 			self.spierror += 1
+			logging.error("Error writing to 7segment display:", self.spierror)
 			print "Error writing to 7segment display: ", self.spierror  
 			self.update()		# try again
 			
@@ -83,6 +106,7 @@ class Clock:
 		Other characters are by exception - need to lookup values in datasheet.
 		Need to add ability to handle negative numbers."""
 		print "Content=", content,
+		logging.info("Showing content: ", content)
 		try:
 			bus.write_byte(self.addr,self.cleardisplay)		#to get rid of colon
 			if content[0] == " ":
@@ -110,13 +134,22 @@ class Clock:
 				bus.write_byte_data(self.addr,self.digit3control,64+32+2+1)	# degree
 		except IOError:
 			self.spierror += 1
+			logging.error("Error writing to 7segment display:", self.spierror)
 			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
 			self.update()	
 			
 	def calcbrightness(self,reading):
-		return(255-reading)
-	
+		logging.info("Calc brightness")
+		timenow=list(time.localtime())
+		hour=timenow[3]
+		minute=timenow[4]
+	#	if( hour == 17 and minute < 15): 
+	#		return(255-reading)
+	#	else:
+		return(0)		# temporarily setting to always min brightness
+		
 	def dimdisplay(self,brightness):
+		logging.info("Setting brightness: "+str(brightness))
 		print "Brightness=",brightness,
 		if brightness == "max":
 			brightness=self.defaultbrightness
@@ -124,11 +157,13 @@ class Clock:
 			bus.write_byte_data(self.addr,self.brightnesscontrol,brightness)
 		except IOError:
 			self.spierror += 1
+			logging.error("Error writing to 7segment display:", self.spierror)
 			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
 	
 class Leds():
 	"""Class to control the bank of 8 leds"""
 	def __init__(self):
+		logging.info("Initialising leds")
 		self.address = 0x20 			# i2C address of MCP23017
 		self.registera = 0x12
 		self.led0=1
@@ -142,12 +177,14 @@ class Leds():
 		bus.write_byte_data(0x20,0x00,0x00) # Set all of bank A to outputs 
 	
 	def ledsoff(self):
+		logging.info("Turn off leds")
 		bus.write_byte_data(self.address,self.registera,0)
 
-	def selftest(self):
+	def selftest(self,waittime,holdtime):
+		logging.info("Running led selftest")
 		print "Running LED selftest"
-		waittime=.1
-		holdtime=1
+		#waittime=.1
+		#holdtime=1
 		#first, turn all the lights out
 		self.ledsoff()
 		#Then run a self-test
@@ -181,6 +218,7 @@ class Leds():
 		self.ledsoff()
 		
 	def updateleds(self):
+		logging.info("Update leds")
 		timenow=list(time.localtime())
 		hour=timenow[3]
 		minute=timenow[4]
@@ -197,6 +235,7 @@ class Leds():
 class Touch():
 	"""Class to handle the inputs from the touch switch ic."""
 	def __init__(self):
+		logging.info("Initialising touch switches")
 		self.address = 0x20 			# i2C address of MCP23017
 		self.registerb = 0x13
 		self.register=self.registerb
@@ -208,6 +247,7 @@ class Touch():
 		bus.write_byte_data(self.address,0x01,0x0C) # Set all of bank B as above
 
 	def reset(self):
+		logging.info("Resetting touch switches")
 		# touch control- 0=momentary, 1=latching.
 		bus.write_byte_data(self.address,self.register,1)
 		time.sleep(.1)
@@ -215,28 +255,33 @@ class Touch():
 		time.sleep(.1)
 		
 	def istouched(self):
+		# This is called frequently, so do NOT log!
+		#logging.info("Reading touch switches")
 		return(bus.read_byte_data(self.address,self.register))
 	 
 class AlarmTime():
 	"""Class to manage the time for the alarm"""
-	alarmhour=0
-	alarmminute=0
+	#alarmhour=0
+	#alarmminute=0
 	
 	def __init__(self):
+		logging.info("Initialising alarm time")
 		a=0 # just to fix the formatting
 #		self.alarmhour=0
 #		self.alarmminute=0
 		
 	def read(self):
+		logging.info("Reading alarm time")
 		f=open('/home/pi/alarmtime','r')
 		fn=f.readline()
 		f.close()
 		a,b = fn.split(":")
-		alarmhour=int(a)
-		alarmminute = int(b)
-		print "Read alarm time: %02d:%02d" % (alarmhour,alarmminute)
+		self.alarmhour=int(a)
+		self.alarmminute = int(b)
+		logging.info("Read alarm time: "+fn)
+		print "Read alarm time: %02d:%02d" % (self.alarmhour,self.alarmminute)
 		print "No alarm on Sat or Sun"
-		return [alarmhour, alarmminute]
+		return [self.alarmhour, self.alarmminute]
 		
 	def check(self):
 		timenow=list(time.localtime())
@@ -244,9 +289,11 @@ class AlarmTime():
 		hour=timenow[3]
 		minute=timenow[4] 
 	#	print "Alarm", alarmhour,alarmminute, "Current", hour,minute
-		if ((hour == alarmhour) and (minute == alarmminute)):
+		if ((hour == self.alarmhour) and (minute == self.alarmminute)):
 			print "Alarm going off"
-			Leds().selftest()
+			return(True)
+		else:
+			return(False)
 
 class RemoteMachine():
 	"""Class to hold methods to communicate with a remote linux machine.
@@ -262,16 +309,16 @@ class RemoteMachine():
 		Then need to add check for whether the program is running."""
 		try:
 			subprocess.check_call(["ping", "-c", "1", "weather"])
-		except CalledProcessError:
+		except subprocess.CalledProcessError:
 			print "Error: host weather not up"
-			return(1)		# abort
+			return(False)		# abort
 
 		p=self.countrunningprocess()
 		
 		if (p > 2):		# seems that we need this value! we might get caught here by similar processes!
 			print "Remote program is running"
 			#Now need to check whether the file has a valid length
-			return(0)
+			return(True)
 		else:
 			print "Remote program is NOT running!!!"
 			# Attempt to restart it here
@@ -329,45 +376,79 @@ class ADC():
 		# print "ADC=", reading[0]
 		return(reading[0])		# input wired to Ch0
 		
-		
-  ##The start of the real code ##
-"""Main:clock6"""
-"""Print info about the environment and initialise all hardware."""
-print "main:- Clock6 - slice of pio-based alarm clock code."
-print "Using 8 leds and seven segment display and using 2 touch switches."
-print "Using remote machine weather to provide outside temperature data."
-myClock=Clock()
-myClock.update()
-myLeds=Leds()
-myLeds.selftest()
-myTouch=Touch()
-myAlarmTime=AlarmTime()
-alarmhour,alarmminute = myAlarmTime.read()
-myRemoteMachine=RemoteMachine()
-remote=myRemoteMachine.verify()		# check that everything is ok with remote machine
-myADC=ADC()
-seccounter=0
-while True:
-	time.sleep(.1)
-	seccounter += 1
-	if seccounter == 5*10: # update every 5 seconds - why not?
-	  seccounter=0
-	  myClock.showcontent(myRemoteMachine.formatcontent())
-	  time.sleep(2)
-	  myClock.update()
-	  myAlarmTime.check()
-	  myClock.dimdisplay(myClock.calcbrightness(myADC.read()))
-	#poll for touch
-	value=myTouch.istouched()
-	if value == 0x08:
-	  myClock.dimdisplay(16)
-	  time.sleep(1)
-	  myClock.dimdisplay("max")	# recover
-	if value == 0x04:
-	  myClock.showalarmtime(alarmhour,alarmminute)
-	  time.sleep(1)
-	  myClock.update()
-	if value == 0x0C:
-	  myLeds.selftest()
-	  time.sleep(1)
+def clockstart():	
+	##The start of the real code ##
+	"""Main:clock6"""
+	"""Print info about the environment and initialise all hardware."""
+	print "main:- Clock6 - slice of pio-based alarm clock code."
+	print "Using 8 leds and seven segment display and using 2 touch switches."
+	print "Using remote machine weather to provide outside temperature data."
+	#print "iRadio v",config.version
+	#logging.info("iRadio v"+str(config.version))
+	logging.info("Setting time")
+	os.environ['TZ'] = 'Europe/London'
+	time.tzset
+	myClock=Clock()
+	myClock.update()
+	myLeds=Leds()
+	myLeds.selftest(.1,1)
+	myTouch=Touch()
+	myAlarmTime=AlarmTime()
+	alarmhour,alarmminute = myAlarmTime.read()
+	myRemoteMachine=RemoteMachine()
+	remote=myRemoteMachine.verify()		# check that everything is ok with remote machine
+	myADC=ADC()
+	seccounter=0
+	ticks=0
+	tick=0
+	remote=myRemoteMachine.verify()	
+
+	while True:
+		time.sleep(.1)			# this is the switch polling interval
+		seccounter += 1
+		if seccounter == 10:		#  a second
+			if tick == 0:
+				tick = 1
+				ticks += 1
+			else:
+				tick = 0
+			myClock.colon(tick)
+			seccounter = 0
+		if ticks == 20: # update every 5 seconds - why not?
+			ticks = 0
+			if remote == True:
+				remote=myRemoteMachine.verify()		# check that everything is ok with remote machine
+			if remote == True:
+				myClock.showcontent(myRemoteMachine.formatcontent())
+			#time.sleep(2)
+			myClock.update()
+			if(myAlarmTime.check()):
+				myLeds.selftest(30,300)	# this is the alarm
+			myClock.dimdisplay(myClock.calcbrightness(myADC.read()))
+		#poll for touch
+		value=myTouch.istouched()
+		if value == 0x08:
+			myClock.dimdisplay(16)
+			time.sleep(1)
+			myClock.dimdisplay("max")	# recover
+		if value == 0x04:
+			myClock.showalarmtime(alarmhour,alarmminute)
+			time.sleep(1)
+			myClock.update()
+		if value == 0x0C:
+			myLeds.selftest(.1,1)
+			time.sleep(1)
 	  
+if __name__ == "__main__":
+	'''	clock6 main routine
+		Sets up the logging and constants, before calling ...
+	'''
+#	logging.basicConfig(format='%(levelname)s:%(message)s',
+	logging.basicConfig(
+						filename='/home/pi/log/clock.log',
+						filemode='w',
+						level=logging.INFO)	#filemode means that we do not append anymore
+#	Default level is warning, level=logging.INFO log lots, level=logging.DEBUG log everything
+	logging.warning(datetime.datetime.now().strftime('%d %b %H:%M')+". Running clock6 class as a standalone app")
+	clockstart()
+	
