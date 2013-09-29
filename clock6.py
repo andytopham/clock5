@@ -1,5 +1,11 @@
 #!/usr/bin/python
 """ clock6.py
+	To control alarmtime...
+		install php
+		change root page for php by edit /etc/lighttpd/lighttpd.conf
+			change /var/www to /home/pi
+		needs index.php to be in home.
+		
 	Todo:
 		catch read error for adc with a try...
 		
@@ -23,7 +29,11 @@ import os
 import subprocess
 import logging
 import datetime
+import re
  
+parallelPortAddress=0x20	# i2c address for parallel port adapter.
+sevenSegAddress=0x77		# i2c address of the 7seg display
+adcAddress=0x28				# i2c address for adc, overridden by search in code.
 bus = smbus.SMBus(1) # For revision 1 Raspberry Pi, change to bus = smbus.SMBus(1) for revision 2.
 
 class Clock:
@@ -45,7 +55,7 @@ class Clock:
 		self.i2caddressconfig=0x80
 		self.factoryreset=0x81
 		self.spierror=0
-		self.addr=0x77		# spi address of the 7seg display
+		self.addr=sevenSegAddress		# spi address of the 7seg display
 	
 	def update(self):
 		# show time on 7 segment display
@@ -236,7 +246,7 @@ class Touch():
 	"""Class to handle the inputs from the touch switch ic."""
 	def __init__(self):
 		logging.info("Initialising touch switches")
-		self.address = 0x20 			# i2C address of MCP23017
+		self.address = parallelPortAddress 			# i2C address of MCP23017
 		self.registerb = 0x13
 		self.register=self.registerb
 		#B0 = ctrl 1 output = 0
@@ -310,7 +320,7 @@ class RemoteMachine():
 		try:
 			subprocess.check_call(["ping", "-c", "1", "weather"])
 		except subprocess.CalledProcessError:
-			print "Error: host weather not up"
+			print "Warning: host weather not up"
 			return(False)		# abort
 
 		p=self.countrunningprocess()
@@ -365,9 +375,30 @@ class RemoteMachine():
 class ADC():
 	"""Class to handle the Hobbytronics analog to digital converter.
 	This is a preprogrammed chip on the i2c bus with 10 channels of input."""
-	adcaddress=0x28
 	def __init__(self):
 		os.system("i2cdetect -y 1")
+		p=subprocess.check_output(["i2cdetect", "-y", "1"])
+		detected=[]
+		r=p.split("\n")
+		for line in r:
+		#	print "Line:",line
+			q=re.compile(" [0-9a-f][0-9a-f]")
+			m=q.findall(line)
+		#	print "m:",m
+			for a in m:
+				if( a != [] ):
+				#	print a
+					detected.append(a)
+	#	for z in detected:
+	#		print z,
+	#	print
+		q=re.compile("2[0-9a-f]")
+		m=q.findall(str(detected))
+	#	print m
+	#	print m[1]
+		adcAddress=hex(int(m[1],16))
+		print "adcAddress:",adcAddress
+		self.adcaddress=int(adcAddress,16)
 		bus.write_byte(self.adcaddress, 0x01)	#setup 8 bit conversion
 		time.sleep(0.1)
 		
