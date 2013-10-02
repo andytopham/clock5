@@ -30,6 +30,7 @@ import subprocess
 import logging
 import datetime
 import re
+import leds			# my own module
  
 parallelPortAddress=0x20	# i2c address for parallel port adapter.
 sevenSegAddress=0x77		# i2c address of the 7seg display
@@ -57,6 +58,11 @@ class Clock:
 		self.spierror=0
 		self.addr=sevenSegAddress		# spi address of the 7seg display
 	
+	def clockoff(self):
+		logging.info("Turn clock display off")
+		bus.write_byte(self.addr,self.cleardisplay)
+		return(0)
+		
 	def update(self):
 		# show time on 7 segment display
 		timenow=list(time.localtime())
@@ -170,78 +176,7 @@ class Clock:
 			logging.error("Error writing to 7segment display:", self.spierror)
 			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
 	
-class Leds():
-	"""Class to control the bank of 8 leds"""
-	def __init__(self):
-		logging.info("Initialising leds")
-		self.address = 0x20 			# i2C address of MCP23017
-		self.registera = 0x12
-		self.led0=1
-		self.led1=2
-		self.led2=4
-		self.led3=8
-		self.led4=16
-		self.led5=32
-		self.led6=64
-		self.led7=128
-		bus.write_byte_data(0x20,0x00,0x00) # Set all of bank A to outputs 
-	
-	def ledsoff(self):
-		logging.info("Turn off leds")
-		bus.write_byte_data(self.address,self.registera,0)
 
-	def selftest(self,waittime,holdtime):
-		logging.info("Running led selftest")
-		print "Running LED selftest"
-		#waittime=.1
-		#holdtime=1
-		#first, turn all the lights out
-		self.ledsoff()
-		#Then run a self-test
-		register=self.registera
-		value=self.led0
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1+self.led2
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1+self.led2+self.led3
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1+self.led2+self.led3+self.led4
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1+self.led2+self.led3+self.led4+self.led5
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1+self.led2+self.led3+self.led4+self.led5+self.led6
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		value=self.led0+self.led1+self.led2+self.led3+self.led4+self.led5+self.led6+self.led7
-		bus.write_byte_data(self.address,register,value)
-		time.sleep(waittime)
-		time.sleep(holdtime)		# all on time
-		# now turn them all off
-		self.ledsoff()
-		
-	def updateleds(self):
-		logging.info("Update leds")
-		timenow=list(time.localtime())
-		hour=timenow[3]
-		minute=timenow[4]
-		day=timenow[6]
-		alarmhour,alarmminute = readalarmtime()
-		print "Time now: %02d:%02d. Day:%01d. Alarm time:%02d:%02d " % (hour,minute,day,alarmhour,alarmminute)
-		if day in range(5):
-			#		print "Valid alarm day"
-			if hour == alarmhour and minute == alarmminute:
-				selftest(stepinterval,leaveledson)
-			else:
-				heartbeat()
-			
 class Touch():
 	"""Class to handle the inputs from the touch switch ic."""
 	def __init__(self):
@@ -421,7 +356,7 @@ def clockstart():
 	time.tzset
 	myClock=Clock()
 	myClock.update()
-	myLeds=Leds()
+	myLeds=leds.Leds()
 	myLeds.selftest(.1,1)
 	myTouch=Touch()
 	myAlarmTime=AlarmTime()
@@ -443,7 +378,7 @@ def clockstart():
 				ticks += 1
 			else:
 				tick = 0
-			myClock.colon(tick)
+		#	myClock.colon(tick)
 			seccounter = 0
 		if ticks == 20: # update every 5 seconds - why not?
 			ticks = 0
@@ -452,10 +387,11 @@ def clockstart():
 			if remote == True:
 				myClock.showcontent(myRemoteMachine.formatcontent())
 			#time.sleep(2)
-			myClock.update()
+#			myClock.update()
 			if(myAlarmTime.check()):
-				myLeds.selftest(30,300)	# this is the alarm
-			myClock.dimdisplay(myClock.calcbrightness(myADC.read()))
+				myLeds.selftest(60,1200)	# this is the alarm
+#			myClock.dimdisplay(myClock.calcbrightness(myADC.read()))
+			myClock.clockoff()
 		#poll for touch
 		value=myTouch.istouched()
 		if value == 0x08:
