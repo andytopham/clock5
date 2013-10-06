@@ -31,7 +31,8 @@ import logging
 import datetime
 import re
 import leds			# my own module
- 
+import alarmtime	# my module
+
 parallelPortAddress=0x20	# i2c address for parallel port adapter.
 sevenSegAddress=0x77		# i2c address of the 7seg display
 adcAddress=0x28				# i2c address for adc, overridden by search in code.
@@ -176,7 +177,6 @@ class Clock:
 			logging.error("Error writing to 7segment display:", self.spierror)
 			print "Error writing to 7segment display. Number  of errors on spi bus= ", self.spierror  
 	
-
 class Touch():
 	"""Class to handle the inputs from the touch switch ic."""
 	def __init__(self):
@@ -204,42 +204,6 @@ class Touch():
 		#logging.info("Reading touch switches")
 		return(bus.read_byte_data(self.address,self.register))
 	 
-class AlarmTime():
-	"""Class to manage the time for the alarm"""
-	#alarmhour=0
-	#alarmminute=0
-	
-	def __init__(self):
-		logging.info("Initialising alarm time")
-		a=0 # just to fix the formatting
-#		self.alarmhour=0
-#		self.alarmminute=0
-		
-	def read(self):
-		logging.info("Reading alarm time")
-		f=open('/home/pi/alarmtime','r')
-		fn=f.readline()
-		f.close()
-		a,b = fn.split(":")
-		self.alarmhour=int(a)
-		self.alarmminute = int(b)
-		logging.info("Read alarm time: "+fn)
-		print "Read alarm time: %02d:%02d" % (self.alarmhour,self.alarmminute)
-		print "No alarm on Sat or Sun"
-		return [self.alarmhour, self.alarmminute]
-		
-	def check(self):
-		timenow=list(time.localtime())
-		timenow=list(time.localtime())
-		hour=timenow[3]
-		minute=timenow[4] 
-	#	print "Alarm", alarmhour,alarmminute, "Current", hour,minute
-		if ((hour == self.alarmhour) and (minute == self.alarmminute)):
-			print "Alarm going off"
-			return(True)
-		else:
-			return(False)
-
 class RemoteMachine():
 	"""Class to hold methods to communicate with a remote linux machine.
 	Currently used to talk to weather machine. 
@@ -359,7 +323,7 @@ def clockstart():
 	myLeds=leds.Leds()
 	myLeds.selftest(.1,1)
 	myTouch=Touch()
-	myAlarmTime=AlarmTime()
+	myAlarmTime=alarmtime.AlarmTime()
 	alarmhour,alarmminute = myAlarmTime.read()
 	myRemoteMachine=RemoteMachine()
 	remote=myRemoteMachine.verify()		# check that everything is ok with remote machine
